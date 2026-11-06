@@ -41,6 +41,9 @@ services:
       - ./app:/code/app:ro
       # read-write: `make migration` writes new revision files out to the host
       - ./migrations:/code/migrations
+      # RSA keypair, read-only. Generated on the host by `make keys`
+      # and never baked into the image.
+      - ./keys:/code/keys:ro
     command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
     restart: unless-stopped
 

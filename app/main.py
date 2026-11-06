@@ -5,7 +5,7 @@ from fastapi import FastAPI
 from app import models  # noqa: F401  -- registers models on Base.metadata
 from app.config import get_settings
 from app.database import engine
-from app.routers import health
+from app.routers import auth, health
 
 settings = get_settings()
 
@@ -24,6 +24,7 @@ app = FastAPI(
 )
 
 app.include_router(health.router)
+app.include_router(auth.router)
 
 
 @app.get("/")

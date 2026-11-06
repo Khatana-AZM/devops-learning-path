@@ -17,11 +17,16 @@ COMPOSE := docker compose
 # compose honours depends_on, so `db` is started and healthy first.
 ALEMBIC := $(COMPOSE) run --rm api alembic
 
+KEYS_DIR := keys
+PRIVATE_KEY := $(KEYS_DIR)/jwt-private.pem
+PUBLIC_KEY := $(KEYS_DIR)/jwt-public.pem
+
 .DEFAULT_GOAL := help
 .PHONY: help build run up down clean restart ps logs config \
         db db-logs db-shell db-reset \
         api api-logs api-shell api-restart api-build test \
-        migrate migration migrate-down migrate-history migrate-current migrate-sql
+        migrate migration migrate-down migrate-history migrate-current migrate-sql \
+        keys keys-show
 
 # ---------------------------------------------------------------- meta ------
 
@@ -36,7 +41,7 @@ config: ## Render the fully-resolved compose file (debug env substitution)
 
 # --------------------------------------------------------------- stack ------
 
-run: up migrate ## Build, start the whole stack, then apply migrations
+run: keys up migrate ## Generate keys if needed, build, start the stack, migrate
 	@echo
 	@echo "  API   -> http://localhost:8000"
 	@echo "  Docs  -> http://localhost:8000/docs"
@@ -96,6 +101,22 @@ api-restart: ## Restart the API container
 test: ## Hit the health endpoints from the host
 	@curl -fsS http://localhost:8000/health     && echo
 	@curl -fsS http://localhost:8000/health/db  && echo
+
+# ---------------------------------------------------------------- keys ------
+
+keys: $(PRIVATE_KEY) ## Generate the RS256 keypair if it doesn't exist (idempotent)
+
+$(PRIVATE_KEY):
+	@mkdir -p $(KEYS_DIR)
+	@openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 -out $(PRIVATE_KEY)
+	@openssl rsa -in $(PRIVATE_KEY) -pubout -out $(PUBLIC_KEY)
+	@chmod 600 $(PRIVATE_KEY)
+	@chmod 644 $(PUBLIC_KEY)
+	@echo "Generated $(PRIVATE_KEY) (0600) and $(PUBLIC_KEY) (0644)"
+	@echo "These are gitignored. Never commit the private key."
+
+keys-show: ## Print the public key (safe to share; verifiers only need this)
+	@cat $(PUBLIC_KEY)
 
 # ---------------------------------------------------------- migrations ------
 
