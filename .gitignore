@@ -9,3 +9,9 @@ venv/
 
 # RSA signing keys -- never commit these
 keys/
+*.pem
+
+# Vercel CLI link state -- machine-local, rewritten by `vercel link`.
+# The ids inside are not credentials, but this isn't source either.
+.vercel
+.env*
