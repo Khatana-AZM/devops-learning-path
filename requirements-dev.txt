@@ -1,0 +1,6 @@
+# Dev/CI only -- deliberately NOT installed into the runtime image.
+-r requirements.txt
+
+pytest==8.3.4
+httpx==0.28.1        # required by fastapi.testclient
+ruff==0.8.6

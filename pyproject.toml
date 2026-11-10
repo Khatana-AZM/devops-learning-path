@@ -1,0 +1,43 @@
+[project]
+name = "devops-learning-path"
+version = "0.1.0"
+description = "FastAPI + Postgres API used to practise the DevOps toolchain"
+requires-python = ">=3.12"
+
+[tool.ruff]
+line-length = 88
+target-version = "py312"
+extend-exclude = ["migrations/versions"]  # generated files, not hand-written
+
+[tool.ruff.lint]
+select = [
+    "E",    # pycodestyle errors
+    "F",    # pyflakes: undefined names, unused imports
+    "I",    # isort: import ordering
+    "B",    # flake8-bugbear: likely bugs
+    "UP",   # pyupgrade: modern syntax
+    "S",    # flake8-bandit: security
+    "C4",   # comprehension cleanups
+    "SIM",  # simplifications
+]
+ignore = [
+    "E501",  # line length -- the formatter owns this
+    "B008",  # function call in default arg: this is how FastAPI Depends() works
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Tests assert on things bandit dislikes by nature.
+"tests/*" = [
+    "S101",  # assert is the entire point of a test
+    "S105",  # "hardcoded password" -- they're fixtures
+    "S106",
+]
+# Alembic's generated env.py has its own conventions.
+"migrations/env.py" = ["E402"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q --strict-markers"
+# Deliberately NOT turning DeprecationWarning into an error: that makes the
+# build fail whenever a dependency deprecates something internally, which is
+# churn we don't control and can't fix.

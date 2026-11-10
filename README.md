@@ -67,6 +67,13 @@ docker compose down        # stop
 docker compose down -v     # stop and wipe the pgdata volume
 ```
 
+## Poking at it by hand
+
+`api.http` has every endpoint as a ready-to-send request for the VS Code
+REST Client extension, grouped into health / auth / tasks / ownership /
+token lifecycle / negative cases. Tokens and ids chain automatically from
+earlier responses, so run it top to bottom the first time.
+
 ## Tasks API
 
 One table, full CRUD, every route authenticated, and you can only ever touch

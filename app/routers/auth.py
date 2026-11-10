@@ -4,11 +4,11 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from app import tokens
 from app.database import get_db
 from app.dependencies import get_current_active_user
 from app.models import User
 from app.schemas import RefreshRequest, Token, UserCreate, UserOut
-from app import tokens
 from app.security import (
     create_access_token,
     fake_verify,
@@ -70,9 +70,7 @@ def login(
     refresh = tokens.issue(db, user)
     db.commit()
     access, expires_in = create_access_token(user.id)
-    return Token(
-        access_token=access, expires_in=expires_in, refresh_token=refresh
-    )
+    return Token(access_token=access, expires_in=expires_in, refresh_token=refresh)
 
 
 @router.post("/refresh", response_model=Token)
@@ -94,9 +92,7 @@ def refresh(payload: RefreshRequest, db: Session = Depends(get_db)) -> Token:
         ) from None
 
     access, expires_in = create_access_token(user.id)
-    return Token(
-        access_token=access, expires_in=expires_in, refresh_token=new_refresh
-    )
+    return Token(access_token=access, expires_in=expires_in, refresh_token=new_refresh)
 
 
 @router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)

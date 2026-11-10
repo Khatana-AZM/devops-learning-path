@@ -5,11 +5,14 @@ RS256 = RSASSA-PKCS1-v1_5 with SHA-256. Asymmetric, so:
   - the PUBLIC key verifies them (safe to hand to gateways/other services)
 """
 
+import base64
+import binascii
 import hashlib
 import secrets
 import uuid
 from datetime import UTC, datetime, timedelta
 from functools import lru_cache
+from pathlib import Path
 
 import bcrypt
 import jwt
@@ -53,24 +56,49 @@ def fake_verify() -> None:
 # -------------------------------------------------------------------- keys --
 
 
+def _decode_pem(raw: str, env_var: str) -> str:
+    """Accept a PEM either raw or base64-wrapped.
+
+    Secret stores mangle multi-line values in all sorts of ways, so base64 is
+    the safer transport. We sniff rather than require a flag: a real PEM
+    always starts with the armour header, anything else we try to decode.
+    """
+    text = raw.strip()
+    if text.startswith("-----BEGIN"):
+        return text
+    try:
+        decoded = base64.b64decode(text, validate=True).decode()
+    except (binascii.Error, UnicodeDecodeError) as exc:
+        raise RuntimeError(
+            f"{env_var} is neither a PEM block nor valid base64."
+        ) from exc
+    if not decoded.lstrip().startswith("-----BEGIN"):
+        raise RuntimeError(f"{env_var} base64-decoded to something that isn't a PEM.")
+    return decoded.strip()
+
+
+def _load_key(inline: str | None, path: Path, env_var: str) -> str:
+    if inline:
+        return _decode_pem(inline, env_var)
+    if path.exists():
+        return path.read_text()
+    raise RuntimeError(
+        f"No JWT key available: set {env_var}, or run `make keys` to write {path}."
+    )
+
+
 @lru_cache
 def _private_key() -> str:
-    path = settings.jwt_private_key_path
-    if not path.exists():
-        raise RuntimeError(
-            f"JWT private key not found at {path}. Run `make keys` to generate it."
-        )
-    return path.read_text()
+    return _load_key(
+        settings.jwt_private_key, settings.jwt_private_key_path, "JWT_PRIVATE_KEY"
+    )
 
 
 @lru_cache
 def _public_key() -> str:
-    path = settings.jwt_public_key_path
-    if not path.exists():
-        raise RuntimeError(
-            f"JWT public key not found at {path}. Run `make keys` to generate it."
-        )
-    return path.read_text()
+    return _load_key(
+        settings.jwt_public_key, settings.jwt_public_key_path, "JWT_PUBLIC_KEY"
+    )
 
 
 # ------------------------------------------------------------------ tokens --
@@ -86,7 +114,7 @@ def create_access_token(subject: str | int) -> tuple[str, int]:
     expire = now + expires_delta
 
     claims = {
-        "sub": str(subject),   # RFC 7519: `sub` MUST be a string
+        "sub": str(subject),  # RFC 7519: `sub` MUST be a string
         "iat": now,
         "nbf": now,
         "exp": expire,

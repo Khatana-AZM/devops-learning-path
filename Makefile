@@ -24,7 +24,8 @@ PUBLIC_KEY := $(KEYS_DIR)/jwt-public.pem
 .DEFAULT_GOAL := help
 .PHONY: help build run up down clean restart ps logs config \
         db db-logs db-shell db-reset \
-        api api-logs api-shell api-restart api-build test \
+        api api-logs api-shell api-restart api-build smoke \
+        venv lint fmt test testdb \
         migrate migration migrate-down migrate-history migrate-current migrate-sql \
         keys keys-show
 
@@ -98,9 +99,43 @@ api-shell: ## Open a shell inside the api container
 api-restart: ## Restart the API container
 	$(COMPOSE) restart api
 
-test: ## Hit the health endpoints from the host
+smoke: ## Curl the health endpoints of the running stack
 	@curl -fsS http://localhost:8000/health     && echo
 	@curl -fsS http://localhost:8000/health/db  && echo
+
+# ------------------------------------------------------- lint and tests ----
+# These run on the HOST, not in a container: fast feedback, and it's exactly
+# what CI does (a runner with python + a Postgres service container).
+
+VENV := .venv
+PY := $(VENV)/bin/python
+PIP := $(VENV)/bin/pip
+
+$(VENV)/bin/activate: requirements-dev.txt requirements.txt
+	python3 -m venv $(VENV)
+	@$(PIP) install -q --upgrade pip
+	@$(PIP) install -q -r requirements-dev.txt
+	@touch $(VENV)/bin/activate
+
+venv: $(VENV)/bin/activate ## Create the dev virtualenv and install dev deps
+
+lint: venv ## Lint with ruff (same command CI runs)
+	$(VENV)/bin/ruff check .
+	$(VENV)/bin/ruff format --check .
+
+fmt: venv ## Auto-fix formatting and import order
+	$(VENV)/bin/ruff check --fix .
+	$(VENV)/bin/ruff format .
+
+testdb: ## Create the test database if it isn't there yet
+	@$(COMPOSE) exec -T db psql -U $${POSTGRES_USER:-app} -d postgres \
+		-tc "SELECT 1 FROM pg_database WHERE datname='appdb_test'" \
+		| grep -q 1 || $(COMPOSE) exec -T db createdb -U $${POSTGRES_USER:-app} appdb_test
+	@echo "appdb_test ready"
+
+test: venv testdb ## Run the pytest suite against appdb_test
+	POSTGRES_HOST=localhost POSTGRES_PORT=5432 POSTGRES_DB=appdb_test \
+		$(VENV)/bin/pytest
 
 # ---------------------------------------------------------------- keys ------
 

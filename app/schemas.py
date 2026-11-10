@@ -28,7 +28,7 @@ class UserOut(BaseModel):
 
 class Token(BaseModel):
     access_token: str
-    token_type: str = "bearer"
+    token_type: str = "bearer"  # noqa: S105 -- a token *type*, not a secret
     expires_in: int  # seconds until the ACCESS token expires
     refresh_token: str
 
