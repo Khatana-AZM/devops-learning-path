@@ -126,13 +126,66 @@ jobs:
 
       - uses: docker/setup-buildx-action@v3
 
-      # push: false for now -- this only proves the Dockerfile builds.
-      # Pushing to the registry on `develop` is the next piece of work.
+      # No push here -- this job runs on pull requests too, and an unreviewed
+      # branch has no business putting images in the registry. It only proves
+      # the Dockerfile still builds. Publishing is the `publish` job below.
       - name: Build Docker image
         uses: docker/build-push-action@v6
         with:
           context: .
           push: false
           tags: devops-learning-path:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  # ------------------------------------------------------------ publish ----
+  publish:
+    name: Publish image
+    runs-on: ubuntu-latest
+
+    # Only on a real push to develop -- never on a pull request.
+    if: github.event_name == 'push' && github.ref == 'refs/heads/develop'
+
+    # The gate that matters: nothing reaches the registry unless lint, tests
+    # and the image build have all gone green.
+    needs: [lint, test, build]
+
+    permissions:
+      contents: read
+      packages: write # scoped to this job only, not the whole workflow
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      # GITHUB_TOKEN is minted per run and expires with it, so there is no
+      # long-lived registry credential to store or rotate.
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # metadata-action lowercases the image name for us. That matters:
+      # github.repository is "Khatana-AZM/devops-learning-path" and GHCR
+      # rejects uppercase, so hand-rolling the tag would fail here.
+      - name: Derive image tags
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository }}
+          tags: |
+            type=sha,format=long
+            type=raw,value=develop
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
