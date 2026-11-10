@@ -9,8 +9,8 @@ app/
   main.py        app factory, lifespan, router wiring
   config.py      env-driven settings (pydantic-settings)
   database.py    engine, SessionLocal, Base, get_db dependency
-  models.py      ORM models (User)     <- CRUD resource goes here too
-  schemas.py     pydantic in/out models <- and here
+  models.py      ORM models: User, RefreshToken, Task
+  schemas.py     pydantic in/out models
   security.py    bcrypt hashing + RS256 sign/verify + opaque token minting
   tokens.py      refresh-token lifecycle: issue / rotate / revoke
   dependencies.py  get_current_user / get_current_active_user
@@ -18,6 +18,7 @@ app/
     health.py    /health, /health/db
     auth.py      /auth/register, /auth/login, /auth/refresh,
                  /auth/logout, /auth/logout-all, /auth/me
+    tasks.py     owner-scoped CRUD for /tasks
 migrations/      alembic revisions
   env.py         reads DB url from app settings
   versions/      generated revision files
@@ -65,6 +66,64 @@ docker compose logs -f api
 docker compose down        # stop
 docker compose down -v     # stop and wipe the pgdata volume
 ```
+
+## Tasks API
+
+One table, full CRUD, every route authenticated, and you can only ever touch
+your own rows.
+
+| method | path | notes |
+|---|---|---|
+| POST | `/tasks` | 201; `user_id` comes from the token, never the body |
+| GET | `/tasks` | `?is_done=`, `?due_before=`, `?limit=` (max 100), `?offset=` |
+| GET | `/tasks/{id}` | 404 if not yours |
+| PATCH | `/tasks/{id}` | partial; 400 on an empty body |
+| DELETE | `/tasks/{id}` | 204 |
+
+```bash
+ACCESS=$(curl -s -X POST localhost:8000/auth/login \
+  -d 'username=you@example.com&password=...' | python3 -c 'import sys,json;print(json.load(sys.stdin)["access_token"])')
+
+curl -X POST localhost:8000/tasks \
+  -H "Authorization: Bearer $ACCESS" -H 'Content-Type: application/json' \
+  -d '{"title":"write the runbook","due_date":"2026-12-01"}'
+
+curl "localhost:8000/tasks?is_done=false&limit=10" -H "Authorization: Bearer $ACCESS"
+```
+
+### How ownership is enforced
+
+Two rules, both in `app/routers/tasks.py`:
+
+**1. The owner check lives in the WHERE clause, not in an `if` after loading.**
+
+```python
+select(Task).where(Task.id == task_id, Task.user_id == user.id)
+```
+
+A filter that's part of the query can't be forgotten halfway down a function
+or skipped by an early return. Fetch-then-check is how IDOR bugs happen.
+
+**2. Someone else's row returns 404, not 403.**
+
+403 confirms the row exists, so anyone could walk `/tasks/1`, `/tasks/2`, ...
+and learn how many tasks the system holds and which ids are real. 404 leaks
+nothing. Verified: a second user gets 404 on GET, PATCH and DELETE of another
+user's task, and an empty list from `GET /tasks`.
+
+### PATCH semantics
+
+`TaskUpdate` has all-optional fields and the router uses
+`model_dump(exclude_unset=True)`, which distinguishes *"field absent"* from
+*"field explicitly null"*. So `{"is_done": true}` leaves `description` alone,
+while `{"due_date": null}` actually clears it. Without `exclude_unset` every
+PATCH would silently wipe the fields it didn't mention.
+
+### Pagination ordering
+
+`ORDER BY created_at DESC, id DESC` -- the `id` tiebreaker matters. Rows
+sharing a `created_at` have no stable order without it, so a client paging
+through the list can silently skip or repeat entries between pages.
 
 ## Auth
 
