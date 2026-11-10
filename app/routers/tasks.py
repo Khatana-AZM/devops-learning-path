@@ -38,7 +38,7 @@ def _owned_task(db: Session, user: User, task_id: int) -> Task:
     The user_id predicate is what makes this safe. Without it this is an
     IDOR: any authenticated user could read or edit any task by guessing ids.
     """
-    task = db.scalar(select(Task).where(Task.id == task_id, Task.user_id == user.id))
+    task = db.get(Task, task_id)
     if task is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Task not found"
