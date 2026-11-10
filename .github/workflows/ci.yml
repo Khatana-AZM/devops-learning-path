@@ -230,29 +230,20 @@ jobs:
         env:
           DATABASE_URL: ${{ secrets.NEON_DATABASE_URL_DIRECT }}
 
+      # Container support is recent -- an older CLI doesn't understand a
+      # Container project and fails with a misleading package.json error.
       - name: Install Vercel CLI
-        run: npm install --global vercel@48.2.0
+        run: npm install --global vercel@65.14.0
 
-      - name: Pull Vercel project settings
-        run: vercel pull --yes --environment=production --token=$VERCEL_TOKEN
-        env:
-          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
-          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
-          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
-
-      - name: Build
-        run: vercel build --prod --token=$VERCEL_TOKEN
-        env:
-          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
-          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
-          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
-
-      # --prebuilt deploys what the step above produced, so the artifact
-      # that ships is the one this run built.
+      # No separate `vercel build`: for a Container project the image is
+      # built on Vercel's infrastructure from the Dockerfile, and building
+      # locally would need a Docker daemon on the runner for no benefit.
+      #
+      # stdout is the deployment URL; progress goes to stderr.
       - name: Deploy
         id: deploy
         run: |
-          url=$(vercel deploy --prebuilt --prod --token=$VERCEL_TOKEN)
+          url=$(vercel deploy --prod --yes --token="$VERCEL_TOKEN")
           echo "url=$url" >> "$GITHUB_OUTPUT"
           echo "Deployed to $url"
         env:
