@@ -14,7 +14,9 @@ if config.config_file_name is not None:
 
 # Credentials come from the environment, never from alembic.ini.
 # '%' is escaped because configparser would treat it as interpolation.
-config.set_main_option("sqlalchemy.url", get_settings().database_url.replace("%", "%%"))
+config.set_main_option(
+    "sqlalchemy.url", get_settings().sqlalchemy_url.replace("%", "%%")
+)
 
 target_metadata = Base.metadata
 
