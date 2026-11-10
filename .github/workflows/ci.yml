@@ -1,0 +1,138 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [develop]
+  push:
+    branches: [develop]
+
+# A new push to the same branch makes the in-flight run pointless. Cancelling
+# it keeps queues short and stops a stale run reporting on old code.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+# Least privilege. This workflow only reads code; the registry push added
+# later will raise `packages: write` on that job alone, not here.
+permissions:
+  contents: read
+
+env:
+  PYTHON_VERSION: "3.12"
+
+jobs:
+  # --------------------------------------------------------------- lint ----
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-dev.txt
+
+      - name: Install dependencies
+        run: pip install -r requirements-dev.txt
+
+      # --output-format=github makes failures appear as inline annotations
+      # on the PR diff instead of only in the log.
+      - name: ruff check
+        run: ruff check --output-format=github .
+
+      - name: ruff format
+        run: ruff format --check .
+
+  # --------------------------------------------------------------- test ----
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+
+    # GitHub runs this container on the runner for the life of the job.
+    # It is thrown away afterwards, so migrations always meet an empty
+    # database -- which is the point.
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: app
+          POSTGRES_PASSWORD: app
+          POSTGRES_DB: appdb_test
+        ports:
+          - 5432:5432
+        # Without a healthcheck the steps start before Postgres accepts
+        # connections and the job fails intermittently. Flaky-green CI is
+        # worse than honest-red CI.
+        options: >-
+          --health-cmd "pg_isready -U app -d appdb_test"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      # Steps run directly on the runner, not inside the Docker network,
+      # so Postgres is reached through the mapped port -- NOT by the
+      # service name the way docker-compose does it.
+      POSTGRES_HOST: localhost
+      POSTGRES_PORT: "5432"
+      POSTGRES_USER: app
+      POSTGRES_PASSWORD: app
+      POSTGRES_DB: appdb_test
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-dev.txt
+
+      - name: Install dependencies
+        run: pip install -r requirements-dev.txt
+
+      # A throwaway keypair, generated per run. CI never sees the real
+      # signing key, and this still works on pull requests from forks,
+      # where repository secrets are deliberately withheld.
+      - name: Generate throwaway RSA keypair
+        run: make keys
+
+      # Proves the migrations apply to a genuinely empty database. Catches
+      # the migration that only works on your laptop because your local DB
+      # already had the table.
+      - name: Apply migrations
+        run: alembic upgrade head
+
+      # Catches "changed the model, forgot to generate the migration".
+      # Exits non-zero on drift.
+      - name: Check models match migrations
+        run: alembic check
+
+      - name: Run tests
+        run: pytest -v
+
+  # -------------------------------------------------------------- build ----
+  build:
+    name: Build image
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      # push: false for now -- this only proves the Dockerfile builds.
+      # Pushing to the registry on `develop` is the next piece of work.
+      - name: Build Docker image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: false
+          tags: devops-learning-path:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
