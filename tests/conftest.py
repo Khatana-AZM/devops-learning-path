@@ -61,7 +61,7 @@ def signing_keys() -> None:
 @pytest.fixture(scope="session")
 def engine():
     settings = get_settings()
-    url = settings.database_url
+    url = settings.sqlalchemy_url
 
     if "test" not in (os.getenv("POSTGRES_DB") or settings.postgres_db):
         pytest.exit(

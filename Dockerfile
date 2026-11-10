@@ -20,6 +20,15 @@ COPY app ./app
 RUN useradd --create-home --uid 1000 appuser && chown -R appuser:appuser /code
 USER appuser
 
+# Documentation only -- it publishes nothing. The port actually bound is
+# $PORT at runtime, defaulting to 8000.
 EXPOSE 8000
 
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+# Hosted platforms (Render, Northflank, Fly, Cloud Run) inject $PORT and
+# expect the process to bind it. A hardcoded port means the health check
+# never passes and the platform reports a timeout rather than the real cause.
+#
+# `exec` matters: without it, sh stays PID 1 and uvicorn is its child, so
+# SIGTERM on shutdown hits sh and the server is killed rather than draining.
+# With exec, uvicorn replaces sh and receives the signal itself.
+CMD ["sh", "-c", "exec uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}"]
