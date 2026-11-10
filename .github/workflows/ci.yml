@@ -189,3 +189,99 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+  # ------------------------------------------------------------- deploy ----
+  deploy:
+    name: Deploy to staging
+    runs-on: ubuntu-latest
+
+    if: github.event_name == 'push' && github.ref == 'refs/heads/develop'
+    needs: [publish]
+
+    # Binds this job to the `staging` GitHub environment. Only jobs that
+    # declare it can read its secrets -- the lint and test jobs physically
+    # cannot reach the production database or the Vercel token.
+    environment:
+      name: staging
+      url: ${{ steps.deploy.outputs.url }}
+
+    permissions:
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      # Migrations run BEFORE the new code ships. The other order deploys an
+      # app that queries columns which don't exist yet.
+      #
+      # The DIRECT Neon URL, not the pooled one: PgBouncer runs in
+      # transaction mode, and schema changes need a real session.
+      - name: Apply migrations to staging
+        run: alembic upgrade head
+        env:
+          DATABASE_URL: ${{ secrets.NEON_DATABASE_URL_DIRECT }}
+
+      - name: Install Vercel CLI
+        run: npm install --global vercel@48.2.0
+
+      - name: Pull Vercel project settings
+        run: vercel pull --yes --environment=production --token=$VERCEL_TOKEN
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+
+      - name: Build
+        run: vercel build --prod --token=$VERCEL_TOKEN
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+
+      # --prebuilt deploys what the step above produced, so the artifact
+      # that ships is the one this run built.
+      - name: Deploy
+        id: deploy
+        run: |
+          url=$(vercel deploy --prebuilt --prod --token=$VERCEL_TOKEN)
+          echo "url=$url" >> "$GITHUB_OUTPUT"
+          echo "Deployed to $url"
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+
+      # A deploy that returns a URL is not a deploy that works. This fails
+      # the job if the app can't serve traffic or can't reach Postgres --
+      # a half-working staging environment is worse than an obvious failure.
+      #
+      # Retries because the container cold-starts, and Neon's compute
+      # resumes from zero on the first connection.
+      - name: Verify staging is healthy
+        run: |
+          url="${{ steps.deploy.outputs.url }}"
+          for attempt in $(seq 1 10); do
+            if curl -fsS --max-time 30 "$url/health" >/dev/null 2>&1; then
+              echo "liveness ok (attempt $attempt)"
+              break
+            fi
+            if [ "$attempt" = "10" ]; then
+              echo "::error::$url/health never returned 200"
+              exit 1
+            fi
+            sleep 10
+          done
+
+          echo "--- /health ---"
+          curl -fsS --max-time 30 "$url/health"; echo
+          echo "--- /health/db (proves migrations + Neon connectivity) ---"
+          curl -fsS --max-time 30 "$url/health/db"; echo
