@@ -216,7 +216,7 @@ def test_failed_attack_does_not_mutate(client, alice, bob):
     assert after["title"] == "original"
 
 
-# ------------------------------------------------------------------- auth --
+# ------------------------------------------------------------------- auth/demo --
 
 
 def test_every_route_requires_a_token(client, alice):
