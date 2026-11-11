@@ -216,9 +216,9 @@ def test_failed_attack_does_not_mutate(client, alice, bob):
     assert after["title"] == "original"
 
 
-# ------------------------------------------------------------------- auth --
+# ------------------------------------------------------------------- auth/demo --
 
-#end
+
 def test_every_route_requires_a_token(client, alice):
     task = create_task(client, alice["headers"])
     assert client.get("/tasks").status_code == 401
