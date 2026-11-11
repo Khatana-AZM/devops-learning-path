@@ -218,7 +218,7 @@ def test_failed_attack_does_not_mutate(client, alice, bob):
 
 # ------------------------------------------------------------------- auth --
 
-
+#end
 def test_every_route_requires_a_token(client, alice):
     task = create_task(client, alice["headers"])
     assert client.get("/tasks").status_code == 401
@@ -227,5 +227,3 @@ def test_every_route_requires_a_token(client, alice):
     assert client.patch(f"/tasks/{task['id']}", json={"title": "x"}).status_code == 401
     assert client.delete(f"/tasks/{task['id']}").status_code == 401
 
-
-# end
