@@ -226,4 +226,3 @@ def test_every_route_requires_a_token(client, alice):
     assert client.get(f"/tasks/{task['id']}").status_code == 401
     assert client.patch(f"/tasks/{task['id']}", json={"title": "x"}).status_code == 401
     assert client.delete(f"/tasks/{task['id']}").status_code == 401
-
