@@ -8,7 +8,7 @@
 # Re-running `registerAlice` after the first time returns 409 -- that is the
 # duplicate-email guard doing its job, not a failure.
 
-@baseUrl = http://localhost:8000
+@baseUrl = https://devops-learning-path.vercel.app
 @contentType = application/json
 
 @aliceEmail = alice@example.com
