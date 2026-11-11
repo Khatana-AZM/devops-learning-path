@@ -208,6 +208,10 @@ jobs:
     permissions:
       contents: read
 
+    # Exposed so the notify job can put the staging link in the Slack message.
+    outputs:
+      url: ${{ steps.deploy.outputs.url }}
+
     steps:
       - uses: actions/checkout@v4
 
@@ -276,3 +280,94 @@ jobs:
           curl -fsS --max-time 30 "$url/health"; echo
           echo "--- /health/db (proves migrations + Neon connectivity) ---"
           curl -fsS --max-time 30 "$url/health/db"; echo
+
+  # ------------------------------------------------------------- notify ----
+  notify:
+    name: Notify Slack
+    runs-on: ubuntu-latest
+
+    # Runs last, and runs even when something upstream failed -- a pipeline
+    # notification that only fires on success is the wrong way round.
+    needs: [lint, test, build, publish, deploy]
+    if: always()
+
+    permissions:
+      contents: read
+
+    steps:
+      - name: Work out the overall result
+        id: result
+        run: |
+          # Jobs skipped by their own `if` (publish and deploy on a PR) are
+          # not failures. Only a real failure or a cancellation is.
+          if ${{ contains(needs.*.result, 'failure') }}; then
+            echo "status=failure"  >> "$GITHUB_OUTPUT"
+            echo "colour=#d1242f"  >> "$GITHUB_OUTPUT"
+            echo "emoji=:x:"       >> "$GITHUB_OUTPUT"
+          elif ${{ contains(needs.*.result, 'cancelled') }}; then
+            echo "status=cancelled"      >> "$GITHUB_OUTPUT"
+            echo "colour=#9a6700"        >> "$GITHUB_OUTPUT"
+            echo "emoji=:warning:"       >> "$GITHUB_OUTPUT"
+          else
+            echo "status=success"            >> "$GITHUB_OUTPUT"
+            echo "colour=#1a7f37"            >> "$GITHUB_OUTPUT"
+            echo "emoji=:white_check_mark:"  >> "$GITHUB_OUTPUT"
+          fi
+
+      # Guarded on the secret being present, so the pipeline keeps working
+      # for anyone who hasn't configured Slack -- a missing webhook should
+      # not turn a green build red.
+      - name: Post to Slack
+        if: env.SLACK_WEBHOOK_URL != ''
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          STATUS: ${{ steps.result.outputs.status }}
+          COLOUR: ${{ steps.result.outputs.colour }}
+          EMOJI: ${{ steps.result.outputs.emoji }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          STAGING_URL: ${{ needs.deploy.outputs.url }}
+          TRIGGER: ${{ github.event_name }}
+          BRANCH: ${{ github.ref_name }}
+          ACTOR: ${{ github.actor }}
+          SUBJECT: ${{ github.event.head_commit.message }}
+        run: |
+          # Built with jq so commit messages containing quotes, newlines or
+          # backslashes can't break the JSON payload.
+          # $'\n' is a real newline. A plain "\n" inside double quotes stays a
+          # literal backslash-n and Slack renders it as those two characters.
+          nl=$'\n'
+
+          summary="*${EMOJI} CI ${STATUS}* — \`${BRANCH}\` (${TRIGGER})"
+          details="<${RUN_URL}|View run> · by ${ACTOR}"
+          if [ -n "$STAGING_URL" ]; then
+            details="${details}${nl}:rocket: Deployed: <${STAGING_URL}|staging>"
+          fi
+          if [ -n "$SUBJECT" ]; then
+            details="${details}${nl}\`\`\`$(printf '%s' "$SUBJECT" | head -1)\`\`\`"
+          fi
+
+          jq -n \
+            --arg fallback "CI ${STATUS} on ${BRANCH}" \
+            --arg colour "$COLOUR" \
+            --arg summary "$summary" \
+            --arg details "$details" \
+            '{
+               text: $fallback,
+               attachments: [{
+                 color: $colour,
+                 blocks: [
+                   { type: "section", text: { type: "mrkdwn", text: $summary } },
+                   { type: "section", text: { type: "mrkdwn", text: $details } }
+                 ]
+               }]
+             }' > payload.json
+
+          curl -fsS -X POST -H 'Content-Type: application/json' \
+            --data @payload.json "$SLACK_WEBHOOK_URL" > /dev/null
+          echo "Slack notified: ${STATUS}"
+
+      - name: Note when Slack isn't configured
+        if: env.SLACK_WEBHOOK_URL == ''
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+        run: echo "::notice::SLACK_WEBHOOK_URL is not set - skipping the Slack notification."
